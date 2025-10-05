@@ -1,0 +1,164 @@
+# Amazon Delivery Prediction Project
+# Author: Navadeep
+# Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+# 1. Load Dataset
+# Replace 'amazon_delivery_data.csv' with your dataset file
+df = pd.read_csv('amazon_delivery_data.csv')
+
+# 2. Basic Data Exploration
+print(df.head())
+print(df.info())
+print(df.describe())
+print(df.isnull().sum())
+
+# 3. Data Cleaning (drop duplicates and fill missing values)
+df = df.drop_duplicates()
+df['Delivery_Date'] = pd.to_datetime(df['Delivery_Date'])
+df['Order_Date'] = pd.to_datetime(df['Order_Date'])
+df['Delivery_Duration'] = (df['Delivery_Date'] - df['Order_Date']).dt.days
+
+# Fill missing values
+df['Product_Weight'].fillna(df['Product_Weight'].median(), inplace=True)
+df['Shipping_Type'].fillna(df['Shipping_Type'].mode()[0], inplace=True)
+
+# 4. Exploratory Data Analysis (EDA)
+plt.figure(figsize=(10,6))
+sns.histplot(df['Delivery_Duration'], bins=30)
+plt.title('Delivery Duration Distribution')
+plt.show()
+
+sns.countplot(x='Shipping_Type', data=df)
+plt.title('Shipping Type Distribution')
+plt.show()
+
+sns.boxplot(x='Shipping_Type', y='Delivery_Duration', data=df)
+plt.title('Delivery Duration by Shipping Type')
+plt.show()
+
+# 5. Feature Engineering
+# Encode categorical variables
+le = LabelEncoder()
+df['Shipping_Type'] = le.fit_transform(df['Shipping_Type'])
+df['Customer_Location'] = le.fit_transform(df['Customer_Location'])
+df['Warehouse_Location'] = le.fit_transform(df['Warehouse_Location'])
+
+# Optional: create new feature for day of week
+df['Order_Day'] = df['Order_Date'].dt.dayofweek
+
+# Features and Target
+X = df[['Product_Weight','Shipping_Type','Customer_Location','Warehouse_Location','Order_Day']]
+y_reg = df['Delivery_Duration']  # For regression
+y_clf = np.where(df['Delivery_Duration']<=3,1,0) # Binary: 1=on-time, 0=delayed
+
+# 6. Split Dataset
+X_train_reg, X_test_reg, y_train_reg, y_test_reg = train_test_split(X, y_reg, test_size=0.2, random_state=42)
+X_train_clf, X_test_clf, y_train_clf, y_test_clf = train_test_split(X, y_clf, test_size=0.2, random_state=42)
+
+# 7. Regression Model (Random Forest)
+reg_model = RandomForestRegressor(n_estimators=100, random_state=42)
+reg_model.fit(X_train_reg, y_train_reg)
+y_pred_reg = reg_model.predict(X_test_reg)
+
+# Regression Evaluation
+print("Regression Metrics:")
+print("MAE:", mean_absolute_error(y_test_reg, y_pred_reg))
+print("RMSE:", np.sqrt(mean_squared_error(y_test_reg, y_pred_reg)))
+print("R2 Score:", r2_score(y_test_reg, y_pred_reg))
+
+# 8. Classification Model (Random Forest)
+clf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+clf_model.fit(X_train_clf, y_train_clf)
+y_pred_clf = clf_model.predict(X_test_clf)
+
+# Classification Evaluation
+print("Classification Metrics:")
+print("Accuracy:", accuracy_score(y_test_clf, y_pred_clf))
+print(confusion_matrix(y_test_clf, y_pred_clf))
+print(classification_report(y_test_clf, y_pred_clf))
+
+# 9. Feature Importance
+feature_importances = pd.Series(reg_model.feature_importances_, index=X.columns)
+feature_importances.sort_values().plot(kind='barh', figsize=(8,6))
+plt.title("Feature Importance")
+plt.show()
+
+# 10. Save Model (Optional)
+import joblib
+joblib.dump(reg_model, 'amazon_delivery_regressor.pkl')
+joblib.dump(clf_model, 'amazon_delivery_classifier.pkl')
+# Amazon Delivery Prediction Web App using Streamlit
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+
+# Load trained models
+reg_model = joblib.load('amazon_delivery_regressor.pkl')
+clf_model = joblib.load('amazon_delivery_classifier.pkl')
+
+# Load LabelEncoder mappings if needed (for categorical columns)
+# For simplicity, we will assume user enters locations/shipping type as numbers
+# Or you can save encoders and load them similarly
+
+st.title("Amazon Delivery Prediction App")
+st.write("Predict delivery duration and on-time status for Amazon shipments.")
+
+# Sidebar for CSV upload
+uploaded_file = st.file_uploader("Upload CSV file with shipment data", type=["csv"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.write("Uploaded Data:")
+    st.dataframe(df.head())
+
+    # Feature Engineering
+    # Convert dates to datetime if columns exist
+    if 'Order_Date' in df.columns:
+        df['Order_Date'] = pd.to_datetime(df['Order_Date'])
+        df['Order_Day'] = df['Order_Date'].dt.dayofweek
+    else:
+        df['Order_Day'] = 0  # default if no date column
+
+    # Fill missing values
+    df['Product_Weight'] = df['Product_Weight'].fillna(df['Product_Weight'].median())
+    df['Shipping_Type'] = df['Shipping_Type'].fillna(0)
+    df['Customer_Location'] = df['Customer_Location'].fillna(0)
+    df['Warehouse_Location'] = df['Warehouse_Location'].fillna(0)
+
+    # Select features
+    X = df[['Product_Weight', 'Shipping_Type', 'Customer_Location', 'Warehouse_Location', 'Order_Day']]
+
+    # Regression Prediction
+    df['Predicted_Delivery_Days'] = reg_model.predict(X)
+
+    # Classification Prediction
+    df['On_Time_Delivery'] = clf_model.predict(X)
+    df['On_Time_Delivery'] = df['On_Time_Delivery'].replace({1:'Yes', 0:'No'})
+
+    st.write("Predictions:")
+    st.dataframe(df[['Product_Weight', 'Shipping_Type', 'Customer_Location', 
+                     'Warehouse_Location', 'Order_Day', 'Predicted_Delivery_Days', 
+                     'On_Time_Delivery']])
+
+    # Download prediction as CSV
+    csv = df.to_csv(index=False)
+    st.download_button(
+        label="Download Predictions as CSV",
+        data=csv,
+        file_name='amazon_delivery_predictions.csv',
+        mime='text/csv'
+    )
+else:
+    st.write("Please upload a CSV file to get predictions.")
